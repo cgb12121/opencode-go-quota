@@ -34,7 +34,7 @@ OpenCode Desktop already knows your Go allowance, but only shows it in **Ctrl+K 
   - Progress bar per window
   - Link to the OpenCode Console activity page
 - **Click to pin**, click again or click outside to close.
-- Refreshes every 60 seconds and when the routed session changes.
+- Fetches **when you open the popover**, every 60 seconds while mounted, and from the **↻ Refresh** button in the popover header. The header shows the last update time (`Updated 18:42`).
 - Fails soft: signed out or API errors show `Quota unavailable` and never break the composer.
 
 Only **% used** is shown, matching the built-in Usage dialog. OpenCode Go is a subscription, so per-session dollar cost stays `$0.00` by design.

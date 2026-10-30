@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
 import { Plugin, Slot } from "@opencode/plugin/gui"
 
@@ -56,6 +56,8 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
   const [pinned, setPinned] = createSignal(false)
   const [hovered, setHovered] = createSignal(false)
   const [position, setPosition] = createSignal({ top: 0, left: 0 })
+  const [updatedAt, setUpdatedAt] = createSignal(0)
+  const [failed, setFailed] = createSignal(false)
   let button: HTMLButtonElement | undefined
   let hideTimer: number | undefined
 
@@ -65,18 +67,24 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
     try {
       const body = await usage.limits({ location: { directory } })
       setInfo(infoOf(body))
+      setFailed(false)
+      setUpdatedAt(Date.now())
     } catch {
-      // Keep the last good values.
+      setFailed(true)
     }
   }
 
-  createEffect(() => {
-    const directory = props.session?.directory
-    if (!directory) return
-    void load(directory)
-    const timer = window.setInterval(() => void load(directory), REFRESH_MS)
-    onCleanup(() => window.clearInterval(timer))
-  })
+  createEffect(
+    on(
+      () => props.session?.directory,
+      (directory) => {
+        if (!directory) return
+        void load(directory)
+        const timer = window.setInterval(() => void load(directory), REFRESH_MS)
+        onCleanup(() => window.clearInterval(timer))
+      },
+    ),
+  )
 
   const place = () => {
     if (!button) return
@@ -85,10 +93,16 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
     setPosition({ top: rect.bottom + 8, left })
   }
 
+  const refresh = () => {
+    const directory = props.session?.directory
+    if (directory) void load(directory)
+  }
+
   const show = () => {
     window.clearTimeout(hideTimer)
     place()
     setOpen(true)
+    if (Date.now() - updatedAt() > 5_000) refresh()
   }
 
   const hide = () => {
@@ -139,6 +153,12 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
   }
 
   const url = () => info()?.workspace?.usageURL
+
+  const updated = () => {
+    const at = updatedAt()
+    if (!at) return ""
+    return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+  }
 
   const openLink = (href: string) => {
     try {
@@ -215,8 +235,27 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
           >
             <div style={{ display: "flex", "align-items": "baseline", "justify-content": "space-between", gap: "8px" }}>
               <span style={{ "font-weight": 600 }}>Quota</span>
-              <span style={{ "font-size": "11px", color: COLORS.muted }}>
-                {info()?.workspace?.name ?? "OpenCode Go"}
+              <span style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "11px", color: COLORS.muted }}>
+                <span>{info()?.workspace?.name ?? "OpenCode Go"}</span>
+                <Show when={updated()}>
+                  <span>· {updated()}</span>
+                </Show>
+                <button
+                  type="button"
+                  title="Refresh quota"
+                  onClick={refresh}
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    color: COLORS.muted,
+                    cursor: "pointer",
+                    padding: "0 2px",
+                    "font-size": "13px",
+                    "line-height": 1,
+                  }}
+                >
+                  ↻
+                </button>
               </span>
             </div>
 
@@ -224,7 +263,9 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
               when={rows().length > 0}
               fallback={
                 <div style={{ color: COLORS.muted, "font-size": "12px", padding: "12px 0 4px" }}>
-                  Quota unavailable. Sign in to OpenCode Console and try again.
+                  {failed()
+                    ? "Quota unavailable. Sign in to OpenCode Console and try again."
+                    : "Loading quota…"}
                 </div>
               }
             >
