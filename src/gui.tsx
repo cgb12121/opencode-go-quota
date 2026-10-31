@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createSignal, on, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
-import { Plugin, Slot } from "@opencode/plugin/gui"
+import { Plugin, Slot, Style } from "@opencode/plugin/gui"
 
 type Meter = { percent?: number; limited?: boolean; resetsAt?: number }
 type Info = {
@@ -27,6 +27,48 @@ const COLORS = {
   fill: "#e6e6e6",
   danger: "#ff7a70",
 }
+
+const css = `
+@keyframes goq-spin { to { transform: rotate(360deg); } }
+.goq-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: #a0a0a0;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+.goq-icon-btn:hover { background: rgba(255,255,255,0.13); color: #fff; }
+.goq-icon-btn:active { background: rgba(255,255,255,0.22); }
+.goq-icon-btn:disabled { cursor: default; opacity: 0.65; }
+.goq-icon-btn[data-busy="true"] svg { animation: goq-spin 0.8s linear infinite; }
+.goq-link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  margin-top: 12px;
+  padding-top: 10px;
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.1);
+  border-radius: 0;
+  background: transparent;
+  color: #a0a0a0;
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+  transition: color 120ms ease;
+}
+.goq-link:hover { color: #fff; text-decoration: underline; }
+.goq-flash { color: #fff; }
+`
 
 function infoOf(body: any): Info | undefined {
   if (!body) return undefined
@@ -58,19 +100,36 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
   const [position, setPosition] = createSignal({ top: 0, left: 0 })
   const [updatedAt, setUpdatedAt] = createSignal(0)
   const [failed, setFailed] = createSignal(false)
+  const [refreshing, setRefreshing] = createSignal(false)
+  const [flash, setFlash] = createSignal(false)
   let button: HTMLButtonElement | undefined
   let hideTimer: number | undefined
+  let flashTimer: number | undefined
+  let inflight = 0
 
-  const load = async (directory: string) => {
+  const load = async (directory: string, feedback = false) => {
     const usage = props.ctx.client?.experimental?.usage ?? props.ctx.client?.usage
     if (!usage?.limits) return
+    inflight += 1
+    setRefreshing(true)
     try {
       const body = await usage.limits({ location: { directory } })
       setInfo(infoOf(body))
       setFailed(false)
       setUpdatedAt(Date.now())
+      if (feedback) {
+        window.clearTimeout(flashTimer)
+        setFlash(true)
+        flashTimer = window.setTimeout(() => setFlash(false), 1200)
+      }
     } catch {
       setFailed(true)
+    } finally {
+      inflight -= 1
+      if (inflight <= 0) {
+        inflight = 0
+        setRefreshing(false)
+      }
     }
   }
 
@@ -95,7 +154,7 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
 
   const refresh = () => {
     const directory = props.session?.directory
-    if (directory) void load(directory)
+    if (directory) void load(directory, true)
   }
 
   const show = () => {
@@ -157,7 +216,7 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
   const updated = () => {
     const at = updatedAt()
     if (!at) return ""
-    return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+    return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
   }
 
   const openLink = (href: string) => {
@@ -237,24 +296,29 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
               <span style={{ "font-weight": 600 }}>Quota</span>
               <span style={{ display: "flex", "align-items": "center", gap: "8px", "font-size": "11px", color: COLORS.muted }}>
                 <span>{info()?.workspace?.name ?? "OpenCode Go"}</span>
-                <Show when={updated()}>
-                  <span>· {updated()}</span>
+                <Show when={refreshing() || updated()}>
+                  <span classList={{ "goq-flash": flash() }}>
+                    · {refreshing() ? "Refreshing…" : `Updated ${updated()}`}
+                  </span>
                 </Show>
                 <button
                   type="button"
-                  title="Refresh quota"
+                  class="goq-icon-btn"
+                  data-busy={refreshing() ? "true" : "false"}
+                  disabled={refreshing()}
+                  title={refreshing() ? "Refreshing…" : "Refresh quota"}
+                  aria-label="Refresh quota"
                   onClick={refresh}
-                  style={{
-                    border: "none",
-                    background: "transparent",
-                    color: COLORS.muted,
-                    cursor: "pointer",
-                    padding: "0 2px",
-                    "font-size": "13px",
-                    "line-height": 1,
-                  }}
                 >
-                  ↻
+                  <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5V6H9.5"
+                      stroke="currentColor"
+                      stroke-width="1.3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
                 </button>
               </span>
             </div>
@@ -321,25 +385,17 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
 
             <Show when={url()}>
               {(link) => (
-                <button
-                  type="button"
-                  onClick={() => openLink(link())}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    "margin-top": "12px",
-                    "padding-top": "10px",
-                    border: "none",
-                    "border-top": `1px solid ${COLORS.border}`,
-                    "border-radius": 0,
-                    background: "transparent",
-                    color: COLORS.muted,
-                    "font-size": "11px",
-                    "text-align": "left",
-                    cursor: "pointer",
-                  }}
-                >
-                  Open Console usage
+                <button type="button" class="goq-link" onClick={() => openLink(link())}>
+                  <span>Open Console usage</span>
+                  <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                    <path
+                      d="M6 3h7v7M13 3 5 11"
+                      stroke="currentColor"
+                      stroke-width="1.3"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
                 </button>
               )}
             </Show>
@@ -352,6 +408,7 @@ function QuotaIndicator(props: { ctx: Ctx; session?: { directory?: string } }) {
 
 export default Plugin.define({
   setup(ctx) {
+    ctx.add(Style, css)
     ctx.add(Slot, {
       at: "session.header",
       order: 11,
